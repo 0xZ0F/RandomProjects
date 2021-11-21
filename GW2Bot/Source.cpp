@@ -7,8 +7,9 @@
 #include "Log.h"
 #include "Keybinds.h"
 
-std::unique_ptr<std::thread> WorkerThread = std::make_unique<std::thread>();
-bool g_IsWorkerRunning = false;
+std::unique_ptr<std::thread> WorkerTwentySeconds = std::make_unique<std::thread>();
+std::unique_ptr<std::thread> WorkerFourtySeconds = std::make_unique<std::thread>();
+bool IsWorkerTwentySeconds = false;
 
 void SendKey(SHORT key) {
 	UINT mappedkey;
@@ -51,33 +52,8 @@ void PickupTurrets() {
 	}
 }
 
-void InitialTurrets() {
-	HWND hWindow = FindWindow(NULL, L"Guild Wars 2");
-	HWND hOriginalWindow = GetForegroundWindow();
-
-	if (!hWindow) {
-		Log("Failed to find window.");
-		return;
-	}
-	Log("Placing primary turrets.");
-
-	SetForegroundWindow(hWindow);
-	Sleep(250);
-
-	SendKey(HEALING_TURRET);
-	Sleep(750);
-	SendKey(TURRET_1);
-	Sleep(500);
-	SendKey(TURRET_2);
-	Sleep(500);
-	SendKey(THUMPER_TURRET);
-	Sleep(50);
-
-	if (hOriginalWindow) { SetForegroundWindow(hOriginalWindow); }
-}
-
 // Every five minutes place turrets using a seperate thread:
-void Worker() {
+void Worker(int additionalSeconds, int turrets[], int size) {
 	HWND hWindow = FindWindow(NULL, L"Guild Wars 2");
 	HWND hOriginalWindow = GetForegroundWindow();
 
@@ -86,62 +62,63 @@ void Worker() {
 		return;
 	}
 
-	Log("Worker started on thread ", WorkerThread->get_id());
+	Log("Worker ", std::this_thread::get_id(), " started.");
 
 	do {
-		g_IsWorkerRunning = true;
-		
-		Log("Sleeping for 5 minutes.");
-		std::this_thread::sleep_for(std::chrono::minutes(5) + std::chrono::seconds(20));
+		// Prevent the 2 threads from placing turrets at the same time:
+		if (WorkerTwentySeconds->get_id() == std::this_thread::get_id()) {
+			IsWorkerTwentySeconds = true;
+		}else {
+			while (IsWorkerTwentySeconds) {
+				Sleep(100);
+			}
+		}
 
-		Log("Placing primary turrets.");
+		Log("Worker ", std::this_thread::get_id(), " placing turrets (delayed by ", additionalSeconds, " seconds).");
 
 		SetForegroundWindow(hWindow);
 		Sleep(250);
 
-		SendKey(HEALING_TURRET);
-		Sleep(1000);
-		SendKey(TURRET_1);
+		for (size_t x = 0; x < size; x++) {
+			SendKey(turrets[x]);
+			Sleep(1000);
+		}
 
-		if (hOriginalWindow) {SetForegroundWindow(hOriginalWindow);}
-		Sleep(10000);
-		SetForegroundWindow(hWindow);
-		Sleep(250);
-		SendKey(TURRET_2);
-
-		if (hOriginalWindow) { SetForegroundWindow(hOriginalWindow); }
-		Sleep(10000);
-		SetForegroundWindow(hWindow);
-		Sleep(250);
-		SendKey(THUMPER_TURRET);
 		Sleep(150);
 
-		if (hOriginalWindow) { SetForegroundWindow(hOriginalWindow); }		
+		if (hOriginalWindow) { SetForegroundWindow(hOriginalWindow); }
+
+		Log("Worker ", std::this_thread::get_id(), " sleeping for 5 minutes ", additionalSeconds, " seconds.");
+		IsWorkerTwentySeconds = false;
+		std::this_thread::sleep_for(std::chrono::minutes(5) + std::chrono::seconds(additionalSeconds));
 	} while (true);
-	g_IsWorkerRunning = false;
 }
 
 int main() {
 	Log("F8 - START");
 	Log("F9 - STOP");
 	Log("F10 - Pickup turrets.");
+	int TwentySecondTurrets[2] = { 1,2 };
+	int FourtySecondTurrets[2] = { 1,2 };
 
 	do {
 		if (GetAsyncKeyState(VK_F8) & 1) {
-			if (WorkerThread->native_handle()) {
-				Log("Thread alreaty created.");
-				continue;
+			if (!WorkerTwentySeconds->native_handle()) {
+				TwentySecondTurrets[0] = HEALING_TURRET;
+				TwentySecondTurrets[1] = TURRET_1;
+				*WorkerTwentySeconds = std::thread(Worker, 20, TwentySecondTurrets, 2);
+				Sleep(100);
 			}
-			else if (g_IsWorkerRunning) {
-				Log("Worker already running.");
-				continue;
-			}
-			InitialTurrets();
-			*WorkerThread = std::thread(Worker);
+			if (!WorkerFourtySeconds->native_handle()) {
+				FourtySecondTurrets[0] = TURRET_2;
+				FourtySecondTurrets[1] = THUMPER_TURRET;
+				*WorkerFourtySeconds = std::thread(Worker, 40, FourtySecondTurrets, 2);
+			}				
 		}		
 		else if (GetAsyncKeyState(VK_F10) & 1) {
 			PickupTurrets();
 		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	} while (!GetAsyncKeyState(VK_F9));
 	
 	Log("Bot Finished");
